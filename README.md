@@ -5,8 +5,7 @@
 
 A modern Android application for discovering nearby Bluetooth devices with detailed device information and signal strength analysis.
 
-<img src="screenshots/scanning.png" width="200" alt="Scanning Screenshot"> <img src="screenshots/results.png" width="200" alt="Results Screenshot">
-
+<img src="screenshots/scanning.jpg" width="200" alt="Scanning Screenshot">
 ## Features
 
 - **Bluetooth LE Device Discovery**
