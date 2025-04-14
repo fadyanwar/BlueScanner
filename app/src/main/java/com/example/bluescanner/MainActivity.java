@@ -3,15 +3,18 @@ package com.example.bluescanner;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
@@ -31,19 +34,27 @@ public class MainActivity extends AppCompatActivity {
 
     private BluetoothAdapter bluetoothAdapter;
     private ArrayAdapter<String> deviceArrayAdapter;
-    private ArrayList<String> deviceList = new ArrayList<>();
+    private final ArrayList<String> deviceList = new ArrayList<>();
     private TextView statusText;
     private Button scanButton;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if (BluetoothDevice.ACTION_FOUND.equals(action)) {
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                short rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE);
 
-                @SuppressLint("MissingPermission") String deviceName = device.getName();
+                String deviceName = device.getName();
                 String deviceAddress = device.getAddress();
-                String deviceInfo = (deviceName != null) ? deviceName + "\n" + deviceAddress : deviceAddress;
+                String deviceType = parseDeviceType(device.getBluetoothClass().getDeviceClass());
+
+                String deviceInfo = String.format("%s\n%s\n%s\n%d dBm",
+                        (deviceName != null && !deviceName.isEmpty()) ? deviceName : "Unknown Device",
+                        deviceAddress,
+                        deviceType,
+                        rssi);
 
                 if (!deviceList.contains(deviceInfo)) {
                     deviceList.add(deviceInfo);
@@ -61,40 +72,79 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Initialize UI components
         statusText = findViewById(R.id.statusText);
         scanButton = findViewById(R.id.scanButton);
         ListView deviceListView = findViewById(R.id.deviceList);
 
-        // Setup list adapter
-        deviceArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, deviceList);
+        // Custom list adapter setup
+        deviceArrayAdapter = new ArrayAdapter<String>(
+                this,
+                R.layout.device_list_item,
+                R.id.deviceName,
+                deviceList
+        ) {
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                View view = super.getView(position, convertView, parent);
+                String[] parts = getItem(position).split("\n");
+
+                TextView name = view.findViewById(R.id.deviceName);
+                TextView address = view.findViewById(R.id.deviceAddress);
+                TextView details = view.findViewById(R.id.deviceDetails);
+
+                name.setText(parts[0]);
+                address.setText(parts[1]);
+                details.setText(parts[2] + " | " + parts[3]);
+
+                // Signal strength color coding
+                int rssi = Integer.parseInt(parts[3].replaceAll("[^\\d-]", ""));
+                if (rssi > -50) {
+                    details.setTextColor(Color.GREEN);
+                } else if (rssi > -70) {
+                    details.setTextColor(Color.YELLOW);
+                } else {
+                    details.setTextColor(Color.RED);
+                }
+
+                return view;
+            }
+        };
+
         deviceListView.setAdapter(deviceArrayAdapter);
 
-        // Get Bluetooth adapter
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
-            statusText.setText("Bluetooth is not supported on this device");
+            statusText.setText("Bluetooth not supported");
             scanButton.setEnabled(false);
             return;
         }
 
-        // Register for broadcasts when a device is discovered
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothDevice.ACTION_FOUND);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
         registerReceiver(receiver, filter);
 
-        // Set up scan button
         scanButton.setOnClickListener(v -> {
-            if (checkPermissions()) {
-                startBluetoothScan();
-            }
+            if (checkPermissions()) startBluetoothScan();
         });
+    }
+
+    private String parseDeviceType(int deviceClass) {
+        switch (deviceClass) {
+            case BluetoothClass.Device.AUDIO_VIDEO_HEADPHONES: return "🎧 Headphones";
+            case BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE: return "📱 Handsfree";
+            case BluetoothClass.Device.PHONE_SMART: return "📱 Smartphone";
+            case BluetoothClass.Device.WEARABLE_WRIST_WATCH: return "⌚ Smartwatch";
+            case BluetoothClass.Device.COMPUTER_LAPTOP: return "💻 Laptop";
+            case BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO: return "🚗 Car Audio";
+            case BluetoothClass.Device.HEALTH_BLOOD_PRESSURE: return "❤️ Health Device";
+            case BluetoothClass.Device.TOY_CONTROLLER: return "🎮 Toy";
+            default: return "❓ Unknown Device";
+        }
     }
 
     private boolean checkPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ requires these permissions
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED ||
                     ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
 
@@ -107,7 +157,6 @@ public class MainActivity extends AppCompatActivity {
                 return false;
             }
         } else {
-            // For older versions, we need location permission
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this,
                         new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
@@ -115,43 +164,33 @@ public class MainActivity extends AppCompatActivity {
                 return false;
             }
         }
-
         return true;
     }
 
+    @SuppressLint("MissingPermission")
     private void startBluetoothScan() {
-        // Check if Bluetooth is enabled
         if (!bluetoothAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                return;
-            }
             startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
             return;
         }
 
-        // Clear previous results
         deviceList.clear();
         deviceArrayAdapter.notifyDataSetChanged();
 
-        // Start discovery
         if (bluetoothAdapter.startDiscovery()) {
             statusText.setText("Scanning for devices...");
             scanButton.setEnabled(false);
         } else {
-            statusText.setText("Could not start scan");
+            statusText.setText("Scan initialization failed");
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_ENABLE_BT) {
-            if (resultCode == RESULT_OK) {
-                startBluetoothScan();
-            } else {
-                Toast.makeText(this, "Bluetooth must be enabled to scan", Toast.LENGTH_SHORT).show();
-            }
+        if (requestCode == REQUEST_ENABLE_BT && resultCode != RESULT_OK) {
+            Toast.makeText(this, "Bluetooth required for scanning", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -166,23 +205,14 @@ public class MainActivity extends AppCompatActivity {
                     break;
                 }
             }
-            if (allGranted) {
-                startBluetoothScan();
-            } else {
-                Toast.makeText(this, "Permissions are required to scan for Bluetooth devices", Toast.LENGTH_SHORT).show();
-            }
+            if (allGranted) startBluetoothScan();
         }
     }
 
-    @SuppressLint("MissingPermission")
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // Don't forget to unregister the receiver
         unregisterReceiver(receiver);
-        // Cancel discovery when the app is destroyed
-        if (bluetoothAdapter != null) {
-            bluetoothAdapter.cancelDiscovery();
-        }
+        if (bluetoothAdapter != null) bluetoothAdapter.cancelDiscovery();
     }
 }
